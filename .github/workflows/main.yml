@@ -1,0 +1,62 @@
+name: Build KeyVPN
+
+on:
+  push:
+    branches: [main, master]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Unpack project zip (if needed)
+        run: |
+          if [ -z "$(find . -name settings.gradle.kts -not -path './.git/*' | head -1)" ]; then
+            Z=$(find . -maxdepth 2 -name '*.zip' -not -path './.git/*' | head -1)
+            if [ -n "$Z" ]; then mkdir -p _project && unzip -q "$Z" -d _project; fi
+          fi
+
+      - name: Find project dir
+        run: |
+          F=$(find . -name settings.gradle.kts -not -path "./.git/*" | head -1)
+          if [ -z "$F" ]; then echo "settings.gradle.kts не найден"; find . -not -path "./.git/*" | head -50; exit 1; fi
+          echo "PROJ=$(dirname "$F")" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.9
+
+      - name: Fetch Xray core
+        run: |
+          mkdir -p "$PROJ/app/libs"
+          curl -fL --retry 3 -o "$PROJ/app/libs/libv2ray.aar" https://github.com/2dust/AndroidLibXrayLite/releases/latest/download/libv2ray.aar
+
+      - name: Build APK
+        working-directory: ${{ env.PROJ }}
+        run: gradle :app:assembleRelease --no-daemon
+
+      - name: Rename APK
+        run: cp "$PROJ/app/build/outputs/apk/release/app-release.apk" KeyVPN-${{ github.run_number }}.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: KeyVPN-apk
+          path: KeyVPN-*.apk
+
+      - name: Release (on tag)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: KeyVPN-*.apk
